@@ -7,20 +7,21 @@ from typing import Tuple
 import numpy as np
 from numpy.typing import NDArray
 
-FloatArray = NDArray[np.float64]
+# Accept any floating dtype for intermediate computation; default remains float64
+FloatArray = NDArray[np.floating]
 
 DEFAULT_NORM_CAP = 1e3
 ARCCOSH_EPS = 1e-6
 SERIES_THRESHOLD = 1e-3
 
 
-def embed(z: FloatArray, *, norm_cap: float = DEFAULT_NORM_CAP) -> FloatArray:
+def embed(z: FloatArray, *, norm_cap: float = DEFAULT_NORM_CAP, dtype: np.dtype = np.float64) -> FloatArray:
     """
     Lift Euclidean vectors onto the Lorentzian hyperboloid.
 
     Ensures ||z|| <= norm_cap for numerical stability.
     """
-    z_arr = np.asarray(z, dtype=np.float64)
+    z_arr = np.asarray(z, dtype=dtype)
     if z_arr.ndim != 2:
         raise ValueError("Input must be 2D array of shape (n, d)")
     squared_norm = np.sum(z_arr * z_arr, axis=1)
@@ -31,7 +32,7 @@ def embed(z: FloatArray, *, norm_cap: float = DEFAULT_NORM_CAP) -> FloatArray:
         scales[mask] = norm_cap / np.maximum(norms[mask], 1e-12)
         z_arr = z_arr * scales[:, None]
         squared_norm = np.sum(z_arr * z_arr, axis=1)
-    u0 = np.sqrt(1.0 + squared_norm)
+    u0 = np.sqrt(1.0 + squared_norm, dtype=dtype)
     return np.concatenate([u0[:, None], z_arr], axis=1)
 
 
@@ -41,8 +42,9 @@ def lorentz_inner(u: FloatArray, v: FloatArray) -> FloatArray:
 
     Supports broadcasting on the leading dimensions.
     """
-    u_arr = np.asarray(u, dtype=np.float64)
-    v_arr = np.asarray(v, dtype=np.float64)
+    # Preserve dtype of inputs to allow lower-precision paths; rely on numpy upcasting if needed.
+    u_arr = np.asarray(u)
+    v_arr = np.asarray(v)
     if u_arr.shape[-1] != v_arr.shape[-1]:
         raise ValueError("Inputs must have matching last dimension")
     return -u_arr[..., 0] * v_arr[..., 0] + np.sum(u_arr[..., 1:] * v_arr[..., 1:], axis=-1)
@@ -52,7 +54,7 @@ def acosh_clamped(x: FloatArray, eps: float = ARCCOSH_EPS) -> FloatArray:
     """
     Numerically stable arcosh with lower clamp and series expansion near 1.
     """
-    x_arr = np.asarray(x, dtype=np.float64)
+    x_arr = np.asarray(x)
     clamped = np.maximum(x_arr, 1.0 + eps)
     delta = clamped - 1.0
     out = np.zeros_like(clamped)

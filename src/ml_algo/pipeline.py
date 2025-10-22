@@ -33,7 +33,7 @@ from ml_algo.metrics import (
     roc_auc_score,
 )
 from ml_algo.model_catboost import CatBoostConfig, CatBoostModel, IsotonicCalibrator
-from ml_algo.performance import LatencyRecorder, StageTimer
+from ml_algo.performance import FallbackCounters, LatencyRecorder, StageTimer
 from ml_algo.robust_scaling import TylerArtifacts, TylerConfig, fit_transform
 from ml_algo.utils.run_metadata import RunMetadata, collect_metadata, persist_metadata
 from ml_algo.validation import ValidationReport, cross_validate_catboost
@@ -69,6 +69,7 @@ class Phase3Result:
     features: pd.DataFrame
     whitened: pd.DataFrame
     tyler: TylerArtifacts
+    fallback_counters: Dict[str, int] | None = None
 
     @property
     def whitened_array(self) -> np.ndarray:
@@ -87,6 +88,8 @@ def run_phase3(
     bar_sizes: Iterable[str],
     gap_policy: GapPolicy,
     tyler_config: TylerConfig | None = None,
+    *,
+    try_fp16: bool = False,
 ) -> Phase3Result:
     """
     Execute Phase 3 of the pipeline: ingest -> HA -> Tyler whitening.
@@ -101,10 +104,26 @@ def run_phase3(
         gap_policy=gap_policy,
     )
     feature_df = ha.loc[:, FEATURE_COLUMNS_PHASE3].astype("float64")
-    whitened_array, tyler_artifacts = fit_transform(
-        feature_df.to_numpy(copy=False),
-        config=tyler_config,
-    )
+    fallbacks: Dict[str, int] | None = None
+    feats = feature_df.to_numpy(copy=False)
+    if try_fp16:
+        counters = FallbackCounters()
+        try:
+            whitened_array, tyler_artifacts = fit_transform(feats.astype(np.float16), config=tyler_config)
+            if not np.isfinite(whitened_array).all():
+                raise FloatingPointError("non-finite FP16 Tyler output")
+        except Exception:
+            counters.increment("tyler")
+            try:
+                whitened_array, tyler_artifacts = fit_transform(feats.astype(np.float32), config=tyler_config)
+                if not np.isfinite(whitened_array).all():
+                    raise FloatingPointError("non-finite FP32 Tyler output")
+            except Exception:
+                counters.increment("tyler")
+                whitened_array, tyler_artifacts = fit_transform(feats, config=tyler_config)
+        fallbacks = counters.as_dict()
+    else:
+        whitened_array, tyler_artifacts = fit_transform(feats, config=tyler_config)
     whitened_df = pd.DataFrame(
         whitened_array,
         columns=[f"z_{i}" for i in range(whitened_array.shape[1])],
@@ -115,6 +134,7 @@ def run_phase3(
         features=feature_df,
         whitened=whitened_df,
         tyler=tyler_artifacts,
+        fallback_counters=fallbacks,
     )
 
 
@@ -134,6 +154,7 @@ class Phase4Result:
     recall: float
     tuner: RecallAutoTuner
     timings_ms: Dict[str, float]
+    fallback_counters: Dict[str, int]
 
     @property
     def observability(self) -> Dict[str, Any]:
@@ -151,6 +172,7 @@ def run_phase4(
     k_final: int = 32,
     tuner: RecallAutoTuner | None = None,
     latency_budget_ms: float | None = None,
+    try_fp16: bool = False,
 ) -> Phase4Result:
     """
     Execute Phase 4: build ANN index, retrieve candidates, and Lorentz rerank.
@@ -158,18 +180,65 @@ def run_phase4(
     if k_final <= 0:
         raise ValueError("k_final must be positive")
     z = phase3.whitened_array
+    fallbacks = FallbackCounters()
     recorder = LatencyRecorder()
     with StageTimer(recorder, "ann_build"):
         index = build_ann_index(z, ann_config)
     with StageTimer(recorder, "ann_search"):
         ids, base_dists, vectors = search_with_vectors(index, z, k_cand=ann_config.k_cand)
     with StageTimer(recorder, "hyperbolic_embed_queries"):
-        query_embeddings = hyperbolic_embed(z)
+        if try_fp16:
+            try:
+                query_embeddings = hyperbolic_embed(z.astype(np.float16), dtype=np.float16)
+                if not np.isfinite(query_embeddings).all():
+                    raise FloatingPointError("non-finite in FP16 embed")
+            except Exception:
+                fallbacks.increment("hyperbolic_embed")
+                try:
+                    query_embeddings = hyperbolic_embed(z.astype(np.float32), dtype=np.float32)
+                    if not np.isfinite(query_embeddings).all():
+                        raise FloatingPointError("non-finite in FP32 embed")
+                except Exception:
+                    fallbacks.increment("hyperbolic_embed")
+                    query_embeddings = hyperbolic_embed(z, dtype=np.float64)
+        else:
+            query_embeddings = hyperbolic_embed(z, dtype=np.float64)
     flat_vectors = vectors.reshape(-1, vectors.shape[-1])
     with StageTimer(recorder, "hyperbolic_embed_candidates"):
-        candidate_embeddings = hyperbolic_embed(flat_vectors).reshape(vectors.shape[0], vectors.shape[1], -1)
+        if try_fp16:
+            try:
+                cand_emb = hyperbolic_embed(flat_vectors.astype(np.float16), dtype=np.float16)
+                if not np.isfinite(cand_emb).all():
+                    raise FloatingPointError("non-finite in FP16 embed (cands)")
+            except Exception:
+                fallbacks.increment("hyperbolic_embed")
+                try:
+                    cand_emb = hyperbolic_embed(flat_vectors.astype(np.float32), dtype=np.float32)
+                    if not np.isfinite(cand_emb).all():
+                        raise FloatingPointError("non-finite in FP32 embed (cands)")
+                except Exception:
+                    fallbacks.increment("hyperbolic_embed")
+                    cand_emb = hyperbolic_embed(flat_vectors, dtype=np.float64)
+        else:
+            cand_emb = hyperbolic_embed(flat_vectors, dtype=np.float64)
+        candidate_embeddings = cand_emb.reshape(vectors.shape[0], vectors.shape[1], -1)
     with StageTimer(recorder, "lorentz_distance"):
-        lorentz_dists = batch_lorentz_distance(query_embeddings, candidate_embeddings)
+        if try_fp16:
+            try:
+                lorentz_dists = batch_lorentz_distance(query_embeddings.astype(np.float16), candidate_embeddings.astype(np.float16))
+                if not np.isfinite(lorentz_dists).all():
+                    raise FloatingPointError("non-finite in FP16 distances")
+            except Exception:
+                fallbacks.increment("lorentz_distance")
+                try:
+                    lorentz_dists = batch_lorentz_distance(query_embeddings.astype(np.float32), candidate_embeddings.astype(np.float32))
+                    if not np.isfinite(lorentz_dists).all():
+                        raise FloatingPointError("non-finite in FP32 distances")
+                except Exception:
+                    fallbacks.increment("lorentz_distance")
+                    lorentz_dists = batch_lorentz_distance(query_embeddings, candidate_embeddings)
+        else:
+            lorentz_dists = batch_lorentz_distance(query_embeddings, candidate_embeddings)
     order = np.argsort(lorentz_dists, axis=1)
     order_top = order[:, :k_final]
     reranked_ids = np.take_along_axis(ids, order_top, axis=1)
@@ -186,6 +255,9 @@ def run_phase4(
     ann_latency_ms = recorder.single_measurements().get("ann_search")
     with StageTimer(recorder, "tuner_step"):
         tuner.step(observed_recall=recall, latency_ms=ann_latency_ms)
+        # Persist chosen params back into index config for downstream use
+        index.config.ef_search = tuner.config.ef_search
+        index.config.nprobe = tuner.config.nprobe
 
     return Phase4Result(
         phase3=phase3,
@@ -200,6 +272,7 @@ def run_phase4(
         recall=recall,
         tuner=tuner,
         timings_ms=recorder.single_measurements(),
+        fallback_counters=fallbacks.as_dict(),
     )
 
 
@@ -268,6 +341,7 @@ class Phase6Result:
     metadata: RunMetadata
     artifact_dir: Path | None = None
     timings_ms: Dict[str, float] | None = None
+    fallback_counters: Dict[str, int] | None = None
 
     @property
     def observability(self) -> Dict[str, Any]:
@@ -329,7 +403,21 @@ def run_phase6(
         model.fit(train_X, train_y, eval_set=(val_X, val_y))
 
     with StageTimer(recorder, "validation_inference"):
-        val_probs = model.predict_proba(val_X)[:, 1]
+        # Try FP16->FP32 fallback path for inference inputs
+        fallbacks = FallbackCounters()
+        try:
+            val_probs = model.predict_proba(val_X.astype(np.float16))[:, 1]
+            if not np.isfinite(val_probs).all():
+                raise FloatingPointError("non-finite FP16 probs")
+        except Exception:
+            fallbacks.increment("inference")
+            try:
+                val_probs = model.predict_proba(val_X.astype(np.float32))[:, 1]
+                if not np.isfinite(val_probs).all():
+                    raise FloatingPointError("non-finite FP32 probs")
+            except Exception:
+                fallbacks.increment("inference")
+                val_probs = model.predict_proba(val_X)[:, 1]
     val_preds = binary_predictions(val_probs)
     metrics = MetricReport(
         accuracy=accuracy_score(val_y, val_preds),
@@ -384,6 +472,7 @@ def run_phase6(
         metadata=metadata,
         artifact_dir=out_dir,
         timings_ms=recorder.single_measurements(),
+        fallback_counters=fallbacks.as_dict(),
     )
 
 

@@ -76,3 +76,19 @@ def measure_stage(recorder: LatencyRecorder, stage: str):
     finally:
         timer.__exit__(None, None, None)
 
+
+class FallbackCounters:
+    """Simple counter bag to track FP16->FP32/FP64 fallbacks per stage."""
+
+    def __init__(self) -> None:
+        self._counters: dict[str, int] = {}
+
+    def increment(self, stage: str) -> None:
+        self._counters[stage] = self._counters.get(stage, 0) + 1
+
+    def as_dict(self) -> dict[str, int]:
+        return dict(self._counters)
+
+    def get(self, stage: str) -> int:
+        return int(self._counters.get(stage, 0))
+

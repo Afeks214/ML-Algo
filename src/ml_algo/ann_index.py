@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import dataclass, field
-from typing import Iterable, Tuple
+from typing import Iterable, Tuple, Optional, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -22,13 +22,14 @@ def _version_hash(array: FloatArray) -> str:
 
 @dataclass
 class AnnConfig:
-    backend: str = "exact"
-    metric: str = "l2"
+    backend: str = "exact"  # exact | faiss_flat | faiss_ivf | hnsw
+    metric: str = "l2"  # l2 | ip
     k_cand: int = 64
-    ef_search: int = 128
+    ef_search: int = 128  # used by HNSW/FAISS-HNSW
     ef_search_max: int = 512
-    nprobe: int = 8
+    nprobe: int = 8       # used by FAISS IVF
     nprobe_max: int = 64
+    nlist: int = 100      # FAISS IVF clusters
 
     def clone(self) -> "AnnConfig":
         return AnnConfig(
@@ -47,25 +48,71 @@ class IndexRef:
     data: FloatArray
     config: AnnConfig
     version: str = field(default="")
+    faiss_index: Optional[Any] = field(default=None, repr=False)
+    backend: str = field(default="exact")
 
 
 def build(z_train: FloatArray, config: AnnConfig) -> IndexRef:
-    """Create an ANN index. Currently implements an exact L2 backend."""
+    """Create an ANN index. Supports exact and optional FAISS backends if installed."""
     if z_train.ndim != 2:
         raise ValueError("Training vectors must be 2D array")
-    if config.backend != "exact":
-        raise NotImplementedError("Only backend='exact' is supported in this reference implementation")
     version = _version_hash(z_train)
-    return IndexRef(data=np.asarray(z_train, dtype=np.float64), config=config.clone(), version=version)
+    data = np.asarray(z_train, dtype=np.float64)
+    backend = config.backend
+    if backend == "exact":
+        return IndexRef(data=data, config=config.clone(), version=version, backend=backend)
+    # Optional FAISS backends
+    if backend in ("faiss_flat", "faiss_ivf"):
+        try:
+            import faiss  # type: ignore
+        except Exception as e:  # pragma: no cover - optional dep
+            # Fallback to exact backend when FAISS is unavailable
+            ref = IndexRef(data=data, config=config.clone(), version=version, backend="exact")
+            return ref
+        d = data.shape[1]
+        if config.metric == "ip":
+            metric = faiss.METRIC_INNER_PRODUCT
+        else:
+            metric = faiss.METRIC_L2
+        if backend == "faiss_flat":
+            idx = faiss.IndexFlat(d, metric) if hasattr(faiss, "IndexFlat") else (
+                faiss.IndexFlatIP(d) if metric == faiss.METRIC_INNER_PRODUCT else faiss.IndexFlatL2(d)
+            )
+            idx.add(data.astype(np.float32))
+        else:
+            quant = faiss.IndexFlat(d, metric) if hasattr(faiss, "IndexFlat") else (
+                faiss.IndexFlatIP(d) if metric == faiss.METRIC_INNER_PRODUCT else faiss.IndexFlatL2(d)
+            )
+            idx = faiss.IndexIVFFlat(quant, d, int(config.nlist), metric)
+            idx.train(data.astype(np.float32))
+            idx.add(data.astype(np.float32))
+            try:
+                idx.nprobe = int(config.nprobe)
+            except Exception:
+                pass
+        return IndexRef(data=data, config=config.clone(), version=version, faiss_index=idx, backend=backend)
+    # HNSW placeholder: fallback to exact until hnswlib is added
+    return IndexRef(data=data, config=config.clone(), version=version, backend="exact")
 
 
 def search(index: IndexRef, z_query: FloatArray, k_cand: int | None = None) -> Tuple[IntArray, FloatArray]:
-    """Search the index and return ids and L2 distances."""
+    """Search the index and return ids and distances."""
     if z_query.ndim != 2:
         raise ValueError("Query vectors must be 2D array")
+    k = k_cand or index.config.k_cand
+    if index.faiss_index is not None:
+        # FAISS path
+        try:
+            import faiss  # type: ignore
+        except Exception:  # pragma: no cover
+            pass
+        I: np.ndarray
+        D: np.ndarray
+        D, I = index.faiss_index.search(z_query.astype(np.float32), int(k))  # type: ignore[attr-defined]
+        return I.astype(np.int64), D.astype(np.float64)
+    # Exact path
     data = index.data
     dists = _pairwise_l2(data, z_query)
-    k = k_cand or index.config.k_cand
     k = min(k, dists.shape[1])
     if k <= 0:
         raise ValueError("k_cand must be positive")

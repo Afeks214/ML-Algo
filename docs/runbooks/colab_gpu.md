@@ -76,10 +76,9 @@ phase3 = run_phase3(
 phase4 = run_phase4(
     phase3,
     ann_config=AnnConfig(
-        backend="hnsw",
+        backend="faiss_ivf",
         k_cand=1024,
-        ef_search=128,
-        ef_search_max=512,
+        nlist=256,
         nprobe=16,
         nprobe_max=64,
     ),
