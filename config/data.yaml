@@ -1,0 +1,9 @@
+sources:
+  - "data/raw/@NQ - 5 min - ETH.csv"
+timezone: "America/New_York"
+bar_sizes:
+  - "5min"
+gap_policy:
+  max_gap_minutes: 15
+  fill_volume: false
+  forward_fill: false

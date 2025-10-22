@@ -1,0 +1,27 @@
+name: ml-algo
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - pyarrow
+  - tqdm
+  - h5py
+  - pip
+  - pip:
+      - faiss-cpu
+      - hnswlib
+      - catboost
+      - pytz
+      - typer
+      - rich
+      - pydantic
+      - pytest
+      - hypothesis
+      - mypy
+      - black
+      - isort
+      - ruff
