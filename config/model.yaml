@@ -1,0 +1,38 @@
+tyler:
+  rho: 0.2
+  tol: 1e-6
+  max_iter: 400
+  center: true
+ann:
+  backend: exact
+  k_cand: 16
+  ef_search: 16
+  ef_search_max: 64
+  nprobe: 4
+  nprobe_max: 16
+kernels:
+  tau_policy: time_diff_bars
+  weight_floor: 1e-9
+  rq:
+    alpha: 1.2
+    ell: 0.5
+  periodic:
+    period: 390
+    ell: 0.8
+  locally_periodic:
+    ell_se: 0.4
+    period: 390
+    ell_per: 0.9
+  mkl_weights: [0.4, 0.3, 0.3]
+catboost:
+  depth: 6
+  learning_rate: 0.05
+  iterations: 1000
+  l2_leaf_reg: 3.0
+  subsample: 0.8
+  random_seed: 42
+  task_type: CPU
+  boosting_type: Ordered
+  allow_writing_files: false
+  od_type: Iter
+

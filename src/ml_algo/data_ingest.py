@@ -8,7 +8,8 @@ from typing import Iterable, List
 import pandas as pd
 import pytz
 
-REQUIRED_COLUMNS = ["ts", "open", "high", "low", "close", "volume"]
+from ml_algo.schema import SchemaValidationError, validate_ohlcv
+
 COLUMN_ALIASES = {
     "Timestamp": "ts",
     "Date": "ts",
@@ -51,23 +52,17 @@ def load(sources: Iterable[str | Path], timezone: str, bar_sizes: Iterable[str])
         raise ValueError("No sources provided")
     combined = pd.concat(frames, ignore_index=True)
     combined["bar_size"] = list(bar_sizes)[0] if bar_sizes else "unknown"
-    combined = validate_schema(combined)
+    try:
+        combined = validate_schema(combined)
+    except SchemaValidationError as exc:
+        raise ValueError(str(exc)) from exc
     combined = to_utc(combined, timezone)
     return combined.sort_values("ts_utc").reset_index(drop=True)
 
 
 def validate_schema(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure required columns exist and numeric types are coerced."""
-    missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
-    df = df.copy()
-    df["ts"] = pd.to_datetime(df["ts"], dayfirst=True, errors="raise", format="mixed")
-    for col in ["open", "high", "low", "close", "volume"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    if df[["open", "high", "low", "close"]].isnull().any().any():
-        raise ValueError("Encountered nulls in OHLC columns after coercion")
-    return df
+    return validate_ohlcv(df)
 
 
 def to_utc(df: pd.DataFrame, timezone: str) -> pd.DataFrame:

@@ -6,7 +6,7 @@ Status
 
 Cross‑refs: SPEC.md §3–§11; Appendices C, F, G, H, I, M, Q, R.
 
-## Blocker 1 — ANN Neighbor Vectors at Inference
+## Blocker 1 — ✅ Completed — ANN Neighbor Vectors at Inference
 
 Tasks
 - ann_index: add `search_with_vectors(Z_q, K_cand) -> (ids, base_dists, Z_neighbors)` and `get_vectors(ids)`.
@@ -19,7 +19,7 @@ Acceptance tests
 
 Owners: ML Eng (A/R), Data Eng (C), Infra (C)
 
-## Blocker 2 — Periodic Kernel τ Semantics (Time‑difference in bars)
+## Blocker 2 — ✅ Completed — Periodic Kernel τ Semantics (Time‑difference in bars)
 
 Tasks
 - model.yaml: add `kernels.periodic.tau_policy: time_diff_bars` and validate.
@@ -32,7 +32,7 @@ Acceptance tests
 
 Owners: ML Eng (A/R)
 
-## Blocker 3 — Fold Isolation (Purge/Embargo) for Tyler & ANN
+## Blocker 3 — ✅ Completed — Fold Isolation (Purge/Embargo) for Tyler & ANN
 
 Tasks
 - cv_protocol/pipeline: build Σ̂ and ANN index per‑train‑fold only; isolate artifact directories per fold; forbid cross‑use.
@@ -44,7 +44,7 @@ Acceptance tests
 
 Owners: ML Eng (A/R), Data Eng (C)
 
-## Blocker 4 — Numerical Guards
+## Blocker 4 — ✅ Completed (FP16 fallbacks pending) — Numerical Guards
 
 Tasks
 - hyperbolic: pairwise/Kahan sum for `-⟨u,v⟩_L`; clamp `s≥1+1e-6`; series path near boundary.
@@ -72,12 +72,12 @@ Owners: ML Eng (A/R), Infra (C)
 
 ---
 
-## Fast Path to GO — Code/Config Checklist
-- [ ] ANN API + recall controller implemented and wired in pipeline.
-- [ ] `tau_policy=time_diff_bars` pinned in model.yaml; parameter validation added.
-- [ ] Per‑fold artifact isolation enforced for Σ̂ and index.
-- [ ] Numeric clamps + Kahan/series + FP16→FP32 fallbacks in place; boundary unit tests added.
-- [ ] Kernels output `effective_neighbors (eff_k)` and weight‑sum floors.
+## Fast Path to GO - Code/Config Checklist
+- [x] ANN API + recall controller implemented and wired in pipeline.
+- [x] 	au_policy=time_diff_bars pinned in model.yaml; parameter validation added.
+- [x] Per-fold artifact isolation enforced for Tyler whitening and ANN indices.
+- [ ] Numeric clamps + series guards + FP16/FP32 fallbacks in place; boundary unit tests added.
+- [x] Kernels output effective_neighbors (eff_k) and weight-sum floors.
 
 ## Tests — Hard Gates (Appendix M)
 - [ ] ANN recall ≥ 0.95 (95% CI); monotone in `ef/nprobe`.

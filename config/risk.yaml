@@ -1,0 +1,11 @@
+caps:
+  daily_loss: 1500
+  max_pos: 1
+  news_embargo_min: 60
+projectx:
+  endpoint: "https://api.projectx.example/v1"
+  key_env: PROJECTX_API_KEY
+  rate_limit_qps: 5.0
+compliance:
+  no_vpn: true
+  device_check: true

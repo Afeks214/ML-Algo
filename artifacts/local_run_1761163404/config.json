@@ -1,0 +1,1 @@
+{"depth": 6, "learning_rate": 0.05, "iterations": 100, "l2_leaf_reg": 3.0, "subsample": 0.8, "loss_function": "Logloss", "random_seed": 42, "early_stopping_rounds": 50, "eval_fraction": 0.2, "class_weights": null, "task_type": "CPU", "devices": null, "boosting_type": "Ordered", "bootstrap_type": null, "grow_policy": null, "od_type": "Iter", "allow_writing_files": false}
