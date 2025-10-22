@@ -58,7 +58,7 @@ Acceptance tests
 
 Owners: ML Eng (A/R)
 
-## Blocker 5 — ANN Recall Auto‑Tuner
+## Blocker 5 — Completed — ANN Recall Auto‑Tuner
 
 Tasks
 - ann_index/controller: monitor rolling recall; increase `ef_search`/`nprobe` when recall < 0.95; persist chosen params.
@@ -76,7 +76,7 @@ Owners: ML Eng (A/R), Infra (C)
 - [x] ANN API + recall controller implemented and wired in pipeline.
 - [x] 	au_policy=time_diff_bars pinned in model.yaml; parameter validation added.
 - [x] Per-fold artifact isolation enforced for Tyler whitening and ANN indices.
-- [ ] Numeric clamps + series guards + FP16/FP32 fallbacks in place; boundary unit tests added.
+- [x] Numeric clamps + series guards + FP16/FP32 fallbacks in place; boundary unit tests added.
 - [x] Kernels output effective_neighbors (eff_k) and weight-sum floors.
 
 ## Tests — Hard Gates (Appendix M)
